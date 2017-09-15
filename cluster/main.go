@@ -18,12 +18,7 @@ import (
 	"github.com/hashicorp/raft"
 )
 
-func PrintNode(node *memberlist.Node) {
-	fmt.Println(node.Name, node.Addr, node.Port)
-}
-
 type State struct {
-	id        string
 	kvs       map[string]string
 	broadcast *memberlist.TransmitLimitedQueue
 	raft      *raft.Raft
@@ -31,8 +26,7 @@ type State struct {
 }
 
 func (s *State) NotifyJoin(node *memberlist.Node) {
-	fmt.Println("NotifyJoin", string(node.Meta))
-	PrintNode(node)
+	fmt.Println("NotifyJoin", node.Addr.String(), string(node.Meta))
 	if s.IsLeader() {
 		f := s.raft.AddPeer(node.Addr.String() + ":" + string(node.Meta))
 		if err := f.Error(); err != raft.ErrKnownPeer && err != nil {
@@ -43,12 +37,10 @@ func (s *State) NotifyJoin(node *memberlist.Node) {
 
 func (s *State) NotifyLeave(node *memberlist.Node) {
 	fmt.Println("NotifyLeave")
-	PrintNode(node)
 }
 
 func (s *State) NotifyUpdate(node *memberlist.Node) {
 	fmt.Println("NotifyUpdate")
-	PrintNode(node)
 }
 
 func (s *State) NodeMeta(limit int) []byte {
@@ -107,16 +99,22 @@ func (s *State) Restore(rc io.ReadCloser) error {
 }
 
 func (s *State) StartRaft(port int, bootstrap bool) {
+	hostname, err := os.Hostname()
+	if err != nil {
+		panic(err)
+	}
+
 	s.raftPort = strconv.Itoa(port)
-	addr, err := net.ResolveTCPAddr("tcp", s.id)
+	bind := hostname + ":" + s.raftPort
+	addr, err := net.ResolveTCPAddr("tcp", bind)
 	if err != nil {
 		panic(err)
 	}
-	transport, err := raft.NewTCPTransport(s.id, addr, 3, time.Second, os.Stderr)
+	transport, err := raft.NewTCPTransport(bind, addr, 3, time.Second, os.Stderr)
 	if err != nil {
 		panic(err)
 	}
-	peerStore := raft.NewJSONPeers("/", transport)
+	peerStore := &InMemoryPeerStore{}
 	logStore := raft.NewInmemStore()
 	snapshotStore := raft.NewDiscardSnapshotStore()
 	config := raft.DefaultConfig()
@@ -128,6 +126,33 @@ func (s *State) StartRaft(port int, bootstrap bool) {
 		panic(err)
 	}
 	s.raft = rft
+}
+
+func (s *State) StartMemberlist(port int, joinAddr string) {
+	hostname, err := os.Hostname()
+	if err != nil {
+		panic(err)
+	}
+
+	mlConfig := memberlist.DefaultLANConfig()
+	mlConfig.BindPort = port
+	mlConfig.Name = hostname + ":" + strconv.Itoa(port)
+	mlConfig.Delegate = s
+	mlConfig.Events = s
+	ml, err := memberlist.Create(mlConfig)
+	if err != nil {
+		panic(err)
+	}
+	s.broadcast.NumNodes = ml.NumMembers
+
+	if joinAddr != "" {
+		_, err := ml.Join([]string{joinAddr})
+		if err != nil {
+			panic(err)
+		}
+	}
+
+	fmt.Println("start on", mlConfig.Name)
 }
 
 func (s *State) IsLeader() bool {
@@ -189,41 +214,31 @@ func (m Message) Message() []byte {
 
 func (m Message) Finished() {}
 
+type InMemoryPeerStore struct {
+	peers []string
+}
+
+func (s *InMemoryPeerStore) Peers() ([]string, error) {
+	return s.peers, nil
+}
+
+func (s *InMemoryPeerStore) SetPeers(peers []string) error {
+	s.peers = peers
+	return nil
+}
+
 func main() {
 	mlPort := flag.Int("ml-port", 12345, "memberlist port")
 	raftPort := flag.Int("raft-port", 54321, "raft port")
 	join := flag.String("join", "", "cluster address")
 	flag.Parse()
 
-	hostname, err := os.Hostname()
-	if err != nil {
-		panic(err)
-	}
-
 	state := &State{
 		kvs:       make(map[string]string),
 		broadcast: &memberlist.TransmitLimitedQueue{RetransmitMult: 3},
 	}
-	state.id = hostname + ":" + strconv.Itoa(*raftPort)
 	state.StartRaft(*raftPort, *join == "")
-
-	mlConfig := memberlist.DefaultLocalConfig()
-	mlConfig.BindPort = *mlPort
-	mlConfig.Name += state.id
-	mlConfig.Delegate = state
-	mlConfig.Events = state
-	ml, err := memberlist.Create(mlConfig)
-	if err != nil {
-		panic(err)
-	}
-	state.broadcast.NumNodes = ml.NumMembers
-
-	if *join != "" {
-		_, err := ml.Join([]string{*join})
-		if err != nil {
-			panic(err)
-		}
-	}
+	state.StartMemberlist(*mlPort, *join)
 
 	sig := make(chan os.Signal)
 	signal.Notify(sig, syscall.SIGINT)
