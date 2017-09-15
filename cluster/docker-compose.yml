@@ -5,4 +5,4 @@ services:
     image: "golang:1.9"
     volumes:
       - ".:/go/src/github.com/morikuni/go-experiment/cluster"
-    working_dir: "/go/src/github.com/morikuni/gp-experiment/cluster"
+    working_dir: "/go/src/github.com/morikuni/go-experiment/cluster"
