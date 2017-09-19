@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -23,6 +24,8 @@ type State struct {
 	broadcast *memberlist.TransmitLimitedQueue
 	raft      *raft.Raft
 	raftPort  string
+	peerStore raft.PeerStore
+	ml        *memberlist.Memberlist
 }
 
 func (s *State) NotifyJoin(node *memberlist.Node) {
@@ -37,6 +40,21 @@ func (s *State) NotifyJoin(node *memberlist.Node) {
 
 func (s *State) NotifyLeave(node *memberlist.Node) {
 	fmt.Println("NotifyLeave")
+	// if s.IsLeader() {
+	// 	f := s.raft.RemovePeer(node.Addr.String() + ":" + string(node.Meta))
+	// 	if err := f.Error(); err != raft.ErrUnknownPeer && err != nil {
+	// 		panic(err)
+	// 	}
+	// }
+}
+
+func (s *State) Peers() []string {
+	p, _ := s.peerStore.Peers()
+	return p
+}
+
+func (s *State) Members() []*memberlist.Node {
+	return s.ml.Members()
 }
 
 func (s *State) NotifyUpdate(node *memberlist.Node) {
@@ -98,23 +116,19 @@ func (s *State) Restore(rc io.ReadCloser) error {
 	return nil
 }
 
-func (s *State) StartRaft(port int, bootstrap bool) {
-	hostname, err := os.Hostname()
-	if err != nil {
-		panic(err)
-	}
-
+func (s *State) StartRaft(addr string, port int, bootstrap bool) {
 	s.raftPort = strconv.Itoa(port)
-	bind := hostname + ":" + s.raftPort
-	addr, err := net.ResolveTCPAddr("tcp", bind)
+	bind := addr + ":" + s.raftPort
+	a, err := net.ResolveTCPAddr("tcp", bind)
 	if err != nil {
 		panic(err)
 	}
-	transport, err := raft.NewTCPTransport(bind, addr, 3, time.Second, os.Stderr)
+	transport, err := raft.NewTCPTransport(bind, a, 3, time.Second, os.Stderr)
 	if err != nil {
 		panic(err)
 	}
-	peerStore := &InMemoryPeerStore{}
+	peerStore := raft.NewJSONPeers("/", transport)
+	s.peerStore = peerStore
 	logStore := raft.NewInmemStore()
 	snapshotStore := raft.NewDiscardSnapshotStore()
 	config := raft.DefaultConfig()
@@ -128,15 +142,11 @@ func (s *State) StartRaft(port int, bootstrap bool) {
 	s.raft = rft
 }
 
-func (s *State) StartMemberlist(port int, joinAddr string) {
-	hostname, err := os.Hostname()
-	if err != nil {
-		panic(err)
-	}
-
+func (s *State) StartMemberlist(addr string, port int, joinAddr string) {
 	mlConfig := memberlist.DefaultLANConfig()
+	mlConfig.BindAddr = addr
 	mlConfig.BindPort = port
-	mlConfig.Name = hostname + ":" + strconv.Itoa(port)
+	mlConfig.Name = addr + ":" + strconv.Itoa(port)
 	mlConfig.Delegate = s
 	mlConfig.Events = s
 	ml, err := memberlist.Create(mlConfig)
@@ -152,6 +162,7 @@ func (s *State) StartMemberlist(port int, joinAddr string) {
 		}
 	}
 
+	s.ml = ml
 	fmt.Println("start on", mlConfig.Name)
 }
 
@@ -233,12 +244,28 @@ func main() {
 	join := flag.String("join", "", "cluster address")
 	flag.Parse()
 
+	hostname, err := os.Hostname()
+	if err != nil {
+		panic(err)
+	}
+	addrs, err := net.DefaultResolver.LookupHost(context.Background(), hostname)
+	if err != nil {
+		panic(err)
+	}
+	var addr string
+	for _, a := range addrs {
+		if net.ParseIP(a).To4() != nil {
+			addr = a
+			break
+		}
+	}
+
 	state := &State{
 		kvs:       make(map[string]string),
 		broadcast: &memberlist.TransmitLimitedQueue{RetransmitMult: 3},
 	}
-	state.StartRaft(*raftPort, *join == "")
-	state.StartMemberlist(*mlPort, *join)
+	state.StartRaft(addr, *raftPort, *join == "")
+	state.StartMemberlist(addr, *mlPort, *join)
 
 	sig := make(chan os.Signal)
 	signal.Notify(sig, syscall.SIGINT)
@@ -259,6 +286,10 @@ func main() {
 				})
 			case text == "leader":
 				fmt.Println(state.IsLeader())
+			case text == "peers":
+				fmt.Println(state.Peers())
+			case text == "members":
+				fmt.Println(state.Members())
 			}
 		}
 	}()
