@@ -21,13 +21,12 @@ func Field(target interface{}, field string, val interface{}) error {
 		return ErrNotStruct
 	}
 
-	srcVal := reflect.ValueOf(val)
 	dstVal := targetVal.FieldByName(field)
-
 	if !dstVal.IsValid() {
 		return ErrNoSuchField
 	}
 
+	srcVal := reflect.ValueOf(val)
 	if srcVal.Type() != dstVal.Type() {
 		return ErrTypeMismatch
 	}
