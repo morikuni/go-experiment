@@ -7,13 +7,19 @@ import (
 )
 
 var (
+	ErrNotStruct    = errors.New("not struct")
 	ErrTypeMismatch = errors.New("type mismatch")
 	ErrNoSuchField  = errors.New("no such field")
 )
 
 // Field override the value of `target.field` to val.
+// PLEASE DO NOT USE THIS FUNCTION IN YOUR PRODUCTION CODE.
 func Field(target interface{}, field string, val interface{}) error {
 	targetVal := reflect.Indirect(reflect.ValueOf(target))
+
+	if targetVal.Kind() != reflect.Struct {
+		return ErrNotStruct
+	}
 
 	srcVal := reflect.ValueOf(val)
 	dstVal := targetVal.FieldByName(field)

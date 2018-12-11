@@ -27,4 +27,10 @@ func TestField(t *testing.T) {
 	if got, want := err, overwrite.ErrTypeMismatch; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
+
+	var i int
+	err = overwrite.Field(&i, "val", 123)
+	if got, want := err, overwrite.ErrNotStruct; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
 }
