@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Encode</title>
+</head>
+<body>
+    <h1>画像を動画にする</h1>
+    <form action="/encode" method="post" enctype="multipart/form-data">
+        <label>長さ(秒数)</label><input type="number" step="0.1" name="seconds" value="1">
+        <label>画像:</label><input type="file" name="images" accept="image/*" multiple="multiple">
+        <input type="submit" value="変換">
+    </form>
+</body>
+</html>
