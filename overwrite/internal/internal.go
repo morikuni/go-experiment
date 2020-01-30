@@ -2,13 +2,17 @@ package internal
 
 type X struct {
 	val string
+	err error
 }
 
-func (x X) Get()string {
+func (x X) GetVal() string {
 	return x.val
 }
 
-func NewX(a string) X{
-	return X{a}
+func (x X) GetErr() error {
+	return x.err
 }
 
+func NewX(a string, err error) X {
+	return X{a, err}
+}

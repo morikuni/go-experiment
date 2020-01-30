@@ -27,8 +27,14 @@ func Field(target interface{}, field string, val interface{}) error {
 	}
 
 	srcVal := reflect.ValueOf(val)
-	if srcVal.Type() != dstVal.Type() {
-		return ErrTypeMismatch
+	srcType := srcVal.Type()
+	dstType := dstVal.Type()
+	if srcType != dstType {
+		if dstVal.Kind() == reflect.Interface && srcType.Implements(dstType) {
+			srcVal = srcVal.Convert(dstType)
+		} else {
+			return ErrTypeMismatch
+		}
 	}
 
 	dstAddr := unsafe.Pointer(dstVal.UnsafeAddr())
